@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>ISP Manager Pro | نظام إدارة مشتركي النت المتكامل</title>
+    <!-- Tailwind CSS with dark mode -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM & Babel -->
+    <script src="https://unpkg.com/react@18.2.0/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- idb library -->
+    <script src="https://unpkg.com/idb@8.0.0/build/umd.js"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes slideIn { from { transform: translateX(-50px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out; }
+        .animate-slide-in { animation: slideIn 0.3s ease-out; }
+        .animate-pulse-slow { animation: pulse 2s infinite; }
+        .modal-backdrop { backdrop-filter: blur(8px); }
+        .transition-smooth { transition: all 0.2s ease-in-out; }
+        .card-hover:hover { transform: translateY(-6px); box-shadow: 0 20px 25px -5px rgba(0,0,0,0.2), 0 10px 10px -5px rgba(0,0,0,0.1); }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        @media print { .no-print { display: none; } body { background: white; color: black; } }
+    </style>
+    <script> tailwind.config = { darkMode: 'class' } </script>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans transition-colors duration-300">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { openDB } = window.idb;
+        const { useState, useEffect, useRef } = React;
+
+        // ------------------- Database Setup -------------------
+        let db;
+        const DB_NAME = "ISP_Manager_Pro_V4";  
+        const DB_VERSION = 1;                   // إصدار جديد
+
+        const showToast = (msg, type = "success") => {
+          
+            alert(msg);
+        };
+
+        async function initDB() {
+            try {
+                db = await openDB(DB_NAME, DB_VERSION, {
+                    async upgrade(db, oldVersion, newVersion, transaction) {
+                        // إنشاء جميع الجداول من الصفر
+                        if (!db.objectStoreNames.contains("customers")) {
+                            const store = db.createObjectStore("customers", { keyPath: "id", autoIncrement: true });
+                            store.createIndex("phone", "phone", { unique: true });
+                            store.createIndex("status", "status");
+                        }
+                        if (!db.objectStoreNames.contains("inventory")) {
+                            const store = db.createObjectStore("inventory", { keyPath: "id", autoIncrement: true });
+                            store.createIndex("name", "name");
+                        }
+                        if (!db.objectStoreNames.contains("installed_items")) {
+                            const store = db.createObjectStore("installed_items", { keyPath: "id", autoIncrement: true });
+                            store.createIndex("customerId", "customerId");
+                            store.createIndex("itemId", "itemId");
+                        }
+                        if (!db.objectStoreNames.contains("payments")) {
+                            const store = db.createObjectStore("payments", { keyPath: "id", autoIncrement: true });
+                            store.createIndex("customerId", "customerId");
+                            store.createIndex("date", "date");
+                            store.createIndex("type", "type");
+                        }
+                        if (!db.objectStoreNames.contains("sales")) {
+                            const store = db.createObjectStore("sales", { keyPath: "id", autoIncrement: true });
+                            store.createIndex("customerId", "customerId");
+                            store.createIndex("date", "date");
+                        }
+                        if (!db.objectStoreNames.contains("expenses")) {
+                            const store = db.createObjectStore("expenses", { keyPath: "id", autoIncrement: true });
+                            store.createIndex("date", "date");
+                            store.createIndex("category", "category");
+                        }
+                        
+                    }
+                });
+            } catch (error) {
+                console.error("initDB error:", error);
+                if (error.name === "NotFoundError" || error.name === "VersionError") {
+                    await new Promise((resolve, reject) => {
+                        const req = indexedDB.deleteDatabase(DB_NAME);
+                        req.onsuccess = () => resolve();
+                        req.onerror = () => reject(req.error);
+                    });
+                    return initDB();
+                }
+                throw error;
+            }
+        }
+
+        const safeDbOperation = async (operation, fallback = null) => {
+            try {
+                return await operation();
+            } catch (e) {
+                console.error(e);
+                return fallback;
+            }
+        };
+
+        const dbHelpers = {
+            getCustomers: () => safeDbOperation(() => db.getAll("customers"), []),
+            addCustomer: (c) => safeDbOperation(() => db.add("customers", c), null),
+            updateCustomer: (c) => safeDbOperation(() => db.put("customers", c), null),
+            deleteCustomer: (id) => safeDbOperation(() => db.delete("customers", id), null),
+            getInventory: () => safeDbOperation(() => db.getAll("inventory"), []),
+            addInventory: (i) => safeDbOperation(() => db.add("inventory", i), null),
+            updateInventory: (i) => safeDbOperation(() => db.put("inventory", i), null),
+            deleteInventory: (id) => safeDbOperation(() => db.delete("inventory", id), null),
+            getInstalledByCustomer: (cid) => safeDbOperation(async () => {
+                const index = db.transaction("installed_items").store.index("customerId");
+                return await index.getAll(cid);
+            }, []),
+            addInstalledItem: (item) => safeDbOperation(() => db.add("installed_items", item), null),
+            getPayments: () => safeDbOperation(() => db.getAll("payments"), []),
+            addPayment: (p) => safeDbOperation(() => db.add("payments", p), null),
+            getSales: () => safeDbOperation(() => db.getAll("sales"), []),
+            addSale: (s) => safeDbOperation(() => db.add("sales", s), null),
+            getExpenses: () => safeDbOperation(() => db.getAll("expenses"), []),
+            addExpense: (e) => safeDbOperation(() => db.add("expenses", e), null),
+            updateExpense: (e) => safeDbOperation(() => db.put("expenses", e), null),
+            deleteExpense: (id) => safeDbOperation(() => db.delete("expenses", id), null),
+        };
+
+        // ------------------- UI Components -------------------
+        const TABS = {
+            DASHBOARD: "dashboard",
+            CUSTOMERS: "customers",
+            INVENTORY: "inventory",
+            EXPENSES: "expenses",
+            REPORTS: "reports"
+        };
+
+        const Modal = ({ isOpen, onClose, title, children }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-60 modal-backdrop animate-fade-in">
+                    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-auto transform transition-all duration-300 scale-100">
+                        <div className="flex justify-between items-center p-5 border-b dark:border-gray-700">
+                            <h3 className="text-xl font-bold">{title}</h3>
+                            <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"><i className="fas fa-times"></i></button>
+                        </div>
+                        <div className="p-5">{children}</div>
+                    </div>
+                </div>
+            );
+        };
+
+        const CustomerCard = ({ customer, onView, onRenew, onDelete, onPrint, salesCount, installedCount }) => {
+            const endDate = new Date(customer.subscriptionEnd);
+            const today = new Date();
+            const daysLeft = Math.ceil((endDate - today) / (1000 * 3600 * 24));
+            let statusBadge = "";
+            if (customer.status === "active") {
+                if (daysLeft < 0) statusBadge = <span className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 px-2 py-1 rounded text-xs">منتهي</span>;
+                else if (daysLeft <= 3) statusBadge = <span className="bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200 px-2 py-1 rounded text-xs">ينتهي قريباً</span>;
+                else statusBadge = <span className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 px-2 py-1 rounded text-xs">نشط</span>;
+            } else statusBadge = <span className="bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300 px-2 py-1 rounded text-xs">موقوف</span>;
+            return (
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-5 border border-gray-100 dark:border-gray-700 card-hover transition-all duration-300 animate-slide-in">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <h3 className="font-bold text-xl">{customer.name}</h3>
+                            <p className="text-gray-600 dark:text-gray-400 text-sm"><i className="fas fa-phone-alt ml-1"></i>{customer.phone}</p>
+                            <p className="text-gray-600 dark:text-gray-400 text-sm">فواتير: {salesCount} | أجهزة: {installedCount}</p>
+                            <p className="text-gray-500 dark:text-gray-500 text-xs mt-1"><i className="fas fa-map-marker-alt ml-1"></i>{customer.address}</p>
+                        </div>
+                        {statusBadge}
+                    </div>
+                    <div className="mt-3 text-sm">
+                        <p><i className="fas fa-calendar-alt ml-1"></i>بداية: {new Date(customer.subscriptionStart).toLocaleDateString('ar-EG')}</p>
+                        <p><i className="fas fa-calendar-check ml-1"></i>نهاية: {new Date(customer.subscriptionEnd).toLocaleDateString('ar-EG')}</p>
+                        {daysLeft >= 0 && daysLeft <= 30 && <p className="text-orange-600 dark:text-orange-400">متبقي {daysLeft} يوم</p>}
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                        <button onClick={() => onView(customer)} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm transition"><i className="fas fa-eye ml-1"></i>تفاصيل</button>
+                        <button onClick={() => onRenew(customer)} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm transition"><i className="fas fa-sync-alt ml-1"></i>تجديد</button>
+                        <button onClick={() => onPrint(customer)} className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-sm transition"><i className="fas fa-print ml-1"></i>طباعة</button>
+                        <button onClick={() => onDelete(customer.id)} className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-sm transition"><i className="fas fa-trash ml-1"></i>حذف</button>
+                    </div>
+                </div>
+            );
+        };
+
+        // Main App
+        const App = () => {
+            const [activeTab, setActiveTab] = useState(TABS.DASHBOARD);
+            const [darkMode, setDarkMode] = useState(true);
+            const [customers, setCustomers] = useState([]);
+            const [inventory, setInventory] = useState([]);
+            const [installedItems, setInstalledItems] = useState({});
+            const [payments, setPayments] = useState([]);
+            const [sales, setSales] = useState([]);
+            const [expenses, setExpenses] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [selectedCustomer, setSelectedCustomer] = useState(null);
+            const [modalOpen, setModalOpen] = useState(false);
+            const [modalType, setModalType] = useState("");
+            const [customerForm, setCustomerForm] = useState({ name: "", phone: "", address: "", subscriptionStart: "", subscriptionEnd: "", status: "active", notes: "" });
+            const [renewMonths, setRenewMonths] = useState(1);
+            const [paymentAmount, setPaymentAmount] = useState(50);
+            const [equipmentItemId, setEquipmentItemId] = useState("");
+            const [equipmentQuantity, setEquipmentQuantity] = useState(1);
+            const [invoiceLines, setInvoiceLines] = useState([]);
+            const [invoiceNote, setInvoiceNote] = useState("");
+            const [currentSaleTotal, setCurrentSaleTotal] = useState(0);
+            const [expenseForm, setExpenseForm] = useState({ description: "", amount: 0, date: new Date().toISOString().slice(0,10), category: "أجهزة" });
+            const [monthlyFilter, setMonthlyFilter] = useState(new Date().toISOString().slice(0,7));
+
+            useEffect(() => {
+                if (darkMode) document.documentElement.classList.add('dark');
+                else document.documentElement.classList.remove('dark');
+            }, [darkMode]);
+
+            const loadData = async () => {
+                setLoading(true);
+                try {
+                    const custs = await dbHelpers.getCustomers();
+                    const inv = await dbHelpers.getInventory();
+                    const allPayments = await dbHelpers.getPayments();
+                    const allSales = await dbHelpers.getSales();
+                    const allExpenses = await dbHelpers.getExpenses();
+                    const installedMap = {};
+                    for (const c of custs) {
+                        const inst = await dbHelpers.getInstalledByCustomer(c.id);
+                        installedMap[c.id] = inst;
+                    }
+                    setCustomers(custs);
+                    setInventory(inv);
+                    setInstalledItems(installedMap);
+                    setPayments(allPayments);
+                    setSales(allSales);
+                    setExpenses(allExpenses);
+                } catch (e) {
+                    console.error(e);
+                    showToast("خطأ في تحميل البيانات", "error");
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            useEffect(() => {
+                initDB().then(() => loadData()).catch(err => {
+                    console.error(err);
+                    setLoading(false);
+                    showToast("فشل تهيئة قاعدة البيانات، الرجاء تحديث الصفحة", "error");
+                });
+            }, []);
+
+            // ========== Customer CRUD with improved debugging ==========
+            const handleSaveCustomer = async (e) => {
+                e.preventDefault();
+                // التحقق من الحقول الأساسية
+                if (!customerForm.name || !customerForm.phone) {
+                    showToast("الاسم ورقم الهاتف مطلوبان", "error");
+                    return;
+                }
+                if (!customerForm.subscriptionStart || !customerForm.subscriptionEnd) {
+                    showToast("يجب تحديد تاريخ بدء وانتهاء الاشتراك", "error");
+                    return;
+                }
+
+                // تحويل التواريخ إلى ISO
+                let startISO, endISO;
+                try {
+                    startISO = new Date(customerForm.subscriptionStart).toISOString();
+                    endISO = new Date(customerForm.subscriptionEnd).toISOString();
+                } catch (dateErr) {
+                    showToast("تنسيق التاريخ غير صحيح", "error");
+                    return;
+                }
+
+                const newCust = {
+                    ...customerForm,
+                    subscriptionStart: startISO,
+                    subscriptionEnd: endISO
+                };
+                delete newCust.id;
+
+                try {
+                    if (customerForm.id) {
+                        // تعديل
+                        newCust.id = customerForm.id;
+                        await dbHelpers.updateCustomer(newCust);
+                        showToast("تم تعديل المشترك بنجاح");
+                    } else {
+                        // إضافة جديدة
+                        const addedId = await dbHelpers.addCustomer(newCust);
+                        if (addedId) {
+                            showToast("تم إضافة المشترك بنجاح");
+                        } else {
+                            showToast("فشل الإضافة، يرجى المحاولة مرة أخرى", "error");
+                            return;
+                        }
+                    }
+                    setModalOpen(false);
+                    loadData();  // إعادة تحميل القائمة
+                } catch (err) {
+                    console.error("Save error:", err);
+                    if (err.name === "ConstraintError") {
+                        showToast("رقم الهاتف موجود مسبقاً", "error");
+                    } else {
+                        showToast("حدث خطأ أثناء الحفظ: " + (err.message || "غير معروف"), "error");
+                    }
+                }
+            };
+
+            const handleDeleteCustomer = async (id) => {
+                if (window.confirm("هل أنت متأكد من حذف هذا المشترك؟")) {
+                    await dbHelpers.deleteCustomer(id);
+                    showToast("تم الحذف");
+                    loadData();
+                }
+            };
+
+            const handleRenew = async (customer, months, amount) => {
+                const newEnd = new Date(customer.subscriptionEnd);
+                newEnd.setMonth(newEnd.getMonth() + months);
+                const updated = { ...customer, subscriptionEnd: newEnd.toISOString(), status: "active" };
+                await dbHelpers.updateCustomer(updated);
+                await dbHelpers.addPayment({
+                    customerId: customer.id,
+                    amount,
+                    date: new Date().toISOString(),
+                    note: `تجديد ${months} شهر`,
+                    type: "subscription",
+                    months
+                });
+                showToast(`تم تجديد اشتراك ${customer.name}`);
+                loadData();
+            };
+
+            const handleAddPayment = async (customerId, amount, note) => {
+                await dbHelpers.addPayment({
+                    customerId,
+                    amount,
+                    date: new Date().toISOString(),
+                    note,
+                    type: "extra",
+                    months: 0
+                });
+                showToast("تم تسجيل الدفعة");
+                loadData();
+            };
+
+            const handleAssignEquipment = async (customerId, itemId, quantity) => {
+                const item = inventory.find(i => i.id == itemId);
+                if (!item || item.quantity < quantity) {
+                    showToast("الكمية غير متوفرة في المخزون", "error");
+                    return;
+                }
+                await dbHelpers.updateInventory({ ...item, quantity: item.quantity - quantity });
+                await dbHelpers.addInstalledItem({
+                    customerId,
+                    itemId,
+                    quantity,
+                    installationDate: new Date().toISOString()
+                });
+                showToast("تم تخصيص الجهاز");
+                loadData();
+            };
+
+            const addInvoiceLine = () => {
+                const item = inventory.find(i => i.id == equipmentItemId);
+                const qty = Number(equipmentQuantity);
+                if (!item || !qty || qty <= 0) {
+                    showToast("اختر صنفًا صحيحًا", "error");
+                    return;
+                }
+                if (item.quantity < qty) {
+                    showToast("المخزون غير كافٍ", "error");
+                    return;
+                }
+                const line = {
+                    id: Date.now(),
+                    itemId: item.id,
+                    itemName: item.name,
+                    quantity: qty,
+                    unitPrice: item.price,
+                    total: qty * item.price
+                };
+                const newLines = [...invoiceLines, line];
+                setInvoiceLines(newLines);
+                setCurrentSaleTotal(newLines.reduce((s, l) => s + l.total, 0));
+                setEquipmentItemId("");
+                setEquipmentQuantity(1);
+            };
+
+            const handleAddSaleInvoice = async (customer) => {
+                if (invoiceLines.length === 0) {
+                    showToast("أضف عناصر للفاتورة أولاً", "error");
+                    return;
+                }
+                for (const line of invoiceLines) {
+                    const item = inventory.find(i => i.id == line.itemId);
+                    if (item.quantity < line.quantity) {
+                        showToast(`المخزون غير كافٍ لـ ${item.name}`, "error");
+                        return;
+                    }
+                    await dbHelpers.updateInventory({ ...item, quantity: item.quantity - line.quantity });
+                    await dbHelpers.addInstalledItem({
+                        customerId: customer.id,
+                        itemId: line.itemId,
+                        quantity: line.quantity,
+                        installationDate: new Date().toISOString()
+                    });
+                }
+                const sale = {
+                    customerId: customer.id,
+                    items: invoiceLines,
+                    totalAmount: currentSaleTotal,
+                    note: invoiceNote,
+                    date: new Date().toISOString()
+                };
+                await dbHelpers.addSale(sale);
+                setInvoiceLines([]);
+                setInvoiceNote("");
+                setCurrentSaleTotal(0);
+                showToast("تم إنشاء فاتورة البيع بنجاح");
+                loadData();
+            };
+
+            const handleSaveExpense = async (e) => {
+                e.preventDefault();
+                const expense = {
+                    ...expenseForm,
+                    date: new Date(expenseForm.date).toISOString(),
+                    amount: Number(expenseForm.amount)
+                };
+                if (expenseForm.id) {
+                    await dbHelpers.updateExpense(expense);
+                } else {
+                    await dbHelpers.addExpense(expense);
+                }
+                showToast("تم حفظ المصروف");
+                setModalOpen(false);
+                loadData();
+            };
+
+            const handleDeleteExpense = async (id) => {
+                if (window.confirm("حذف المصروف؟")) {
+                    await dbHelpers.deleteExpense(id);
+                    loadData();
+                }
+            };
+
+            const printInvoice = (customer, type = "subscription") => {
+                const installed = installedItems[customer.id] || [];
+                const custPayments = payments.filter(p => p.customerId === customer.id).sort((a, b) => new Date(b.date) - new Date(a.date));
+                const custSales = sales.filter(s => s.customerId === customer.id).sort((a, b) => new Date(b.date) - new Date(a.date));
+                const lastPayment = custPayments[0];
+                const html = `
+                    <!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><title>فاتورة ${customer.name}</title>
+                    <style>
+                        body { font-family: Tahoma, Arial; margin: 20px; }
+                        .invoice { max-width: 800px; margin: auto; border: 1px solid #ddd; padding: 20px; border-radius: 12px; }
+                        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+                        th, td { border: 1px solid #ddd; padding: 8px; text-align: right; }
+                        th { background: #f2f2f2; }
+                        .header { text-align: center; margin-bottom: 20px; }
+                        .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #777; }
+                    </style>
+                    </head><body><div class="invoice">
+                    <div class="header"><h2>شركة خدمات الإنترنت</h2><p>فاتورة ${type === "subscription" ? "اشتراك" : "بيع أجهزة"}</p></div>
+                    <p><strong>اسم المشترك:</strong> ${customer.name}</p>
+                    <p><strong>الهاتف:</strong> ${customer.phone}</p>
+                    <p><strong>العنوان:</strong> ${customer.address}</p>
+                    <p><strong>تاريخ الاشتراك:</strong> ${new Date(customer.subscriptionStart).toLocaleDateString('ar-EG')}</p>
+                    <p><strong>تاريخ الانتهاء:</strong> ${new Date(customer.subscriptionEnd).toLocaleDateString('ar-EG')}</p>
+                    <h3>الأجهزة المركبة</h3>
+                    <table><thead><tr><th>الجهاز</th><th>الكمية</th><th>تاريخ التركيب</th></tr></thead><tbody>
+                        ${installed.map(inst => {
+                            const it = inventory.find(i => i.id === inst.itemId);
+                            return `<tr><td>${it ? it.name : 'غير معروف'}</td><td>${inst.quantity}</td><td>${new Date(inst.installationDate).toLocaleDateString('ar-EG')}</td></tr>`;
+                        }).join('')}
+                    </tbody></table>
+                    <h3>فواتير البيع السابقة</h3>
+                    <table><thead><tr><th>التاريخ</th><th>المبلغ ($)</th><th>ملاحظات</th></tr></thead><tbody>
+                        ${custSales.map(s => `<tr><td>${new Date(s.date).toLocaleDateString('ar-EG')}</td><td>${s.totalAmount.toFixed(2)}</td><td>${s.note || '-'}</td></tr>`).join('')}
+                    </tbody></table>
+                    <h3>آخر دفعة</h3>
+                    <table><thead><tr><th>التاريخ</th><th>المبلغ ($)</th><th>ملاحظات</th></tr></thead><tbody>
+                        ${lastPayment ? `<tr><td>${new Date(lastPayment.date).toLocaleDateString('ar-EG')}</td><td>${lastPayment.amount}</td><td>${lastPayment.note || ''}</td></tr>` : '<tr><td colspan="3">لا توجد دفعات</td></tr>'}
+                    </tbody></table>
+                    <div class="footer">هذه الفاتورة صادرة من نظام ISP Manager Pro</div>
+                    </div></body></html>
+                `;
+                const win = window.open('', '_blank');
+                win.document.write(html);
+                win.document.close();
+                win.print();
+            };
+
+            // Dashboard stats
+            const currentDate = new Date();
+            const currentMonth = currentDate.getFullYear() + "-" + String(currentDate.getMonth() + 1).padStart(2, '0');
+            const monthlyPayments = payments.filter(p => p.date.startsWith(currentMonth)).reduce((s, p) => s + p.amount, 0);
+            const monthlySales = sales.filter(s => s.date.startsWith(currentMonth)).reduce((s, sale) => s + sale.totalAmount, 0);
+            const monthlyExpenses = expenses.filter(e => e.date.startsWith(currentMonth)).reduce((s, e) => s + e.amount, 0);
+            const monthlyNet = monthlyPayments + monthlySales - monthlyExpenses;
+
+            const activeCustomers = customers.filter(c => c.status === 'active' && new Date(c.subscriptionEnd) >= currentDate).length;
+            const expiredCustomers = customers.filter(c => new Date(c.subscriptionEnd) < currentDate).length;
+            const totalInventoryItems = inventory.reduce((s, i) => s + i.quantity, 0);
+            const totalRevenueAll = payments.reduce((s, p) => s + p.amount, 0) + sales.reduce((s, sl) => s + sl.totalAmount, 0);
+
+            const chartRef = useRef(null);
+            useEffect(() => {
+                if (activeTab === TABS.DASHBOARD && chartRef.current) {
+                    const ctx = chartRef.current.getContext('2d');
+                    if (window.myChart) window.myChart.destroy();
+                    const months = ["يناير", "فبراير", "مارس", "إبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
+                    const last6 = [];
+                    for (let i = 5; i >= 0; i--) {
+                        const d = new Date();
+                        d.setMonth(d.getMonth() - i);
+                        const ym = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, '0');
+                        const rev = payments.filter(p => p.date.startsWith(ym)).reduce((s, p) => s + p.amount, 0) +
+                                    sales.filter(s => s.date.startsWith(ym)).reduce((s, sl) => s + sl.totalAmount, 0);
+                        const exp = expenses.filter(e => e.date.startsWith(ym)).reduce((s, e) => s + e.amount, 0);
+                        last6.push({ month: months[d.getMonth()], revenue: rev, expense: exp });
+                    }
+                    window.myChart = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: last6.map(i => i.month),
+                            datasets: [
+                                { label: 'الإيرادات', data: last6.map(i => i.revenue), backgroundColor: '#10b981', borderRadius: 8 },
+                                { label: 'المصاريف', data: last6.map(i => i.expense), backgroundColor: '#ef4444', borderRadius: 8 }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: { legend: { labels: { color: darkMode ? '#e5e7eb' : '#1f2937' } } }
+                        }
+                    });
+                }
+            }, [activeTab, payments, sales, expenses, darkMode]);
+
+            if (loading) return (
+                <div className="flex justify-center items-center h-screen">
+                    <div className="animate-pulse-slow text-2xl"><i className="fas fa-spinner fa-spin ml-2"></i> جاري التحميل...</div>
+                </div>
+            );
+
+            return (
+                <div className="max-w-7xl mx-auto p-4 pb-12">
+                    <div className="flex justify-between items-center mb-8">
+                        <div>
+                            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">ISP Manager Pro</h1>
+                            <p className="text-gray-600 dark:text-gray-400">نظام إدارة متكامل لمشروع الإنترنت</p>
+                        </div>
+                        <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-full bg-gray-200 dark:bg-gray-700 transition">
+                            {darkMode ? <i className="fas fa-sun text-yellow-500"></i> : <i className="fas fa-moon text-gray-700"></i>}
+                        </button>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 mb-6 border-b border-gray-200 dark:border-gray-700 pb-2">
+                        {Object.entries(TABS).map(([k, v]) => (
+                            <button key={k} onClick={() => setActiveTab(v)} className={`px-5 py-2 rounded-t-lg transition-all duration-200 ${activeTab === v ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700'}`}>
+                                {v === 'dashboard' && <><i className="fas fa-chart-line ml-1"></i> لوحة التحكم</>}
+                                {v === 'customers' && <><i className="fas fa-users ml-1"></i> المشتركين</>}
+                                {v === 'inventory' && <><i className="fas fa-boxes ml-1"></i> المخزون</>}
+                                {v === 'expenses' && <><i className="fas fa-money-bill-wave ml-1"></i> المصاريف</>}
+                                {v === 'reports' && <><i className="fas fa-file-alt ml-1"></i> التقارير</>}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Dashboard */}
+                    {activeTab === TABS.DASHBOARD && (
+                        <div className="space-y-6 animate-fade-in">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-lg text-center transform transition hover:scale-105">
+                                    <i className="fas fa-user-check text-green-500 text-4xl"></i><h3 className="text-gray-500 dark:text-gray-400 mt-2">نشط</h3><p className="text-3xl font-bold">{activeCustomers}</p>
+                                </div>
+                                <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-lg text-center transform transition hover:scale-105">
+                                    <i className="fas fa-user-times text-red-500 text-4xl"></i><h3 className="text-gray-500 dark:text-gray-400 mt-2">منتهي</h3><p className="text-3xl font-bold">{expiredCustomers}</p>
+                                </div>
+                                <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-lg text-center transform transition hover:scale-105">
+                                    <i className="fas fa-box-open text-blue-500 text-4xl"></i><h3 className="text-gray-500 dark:text-gray-400 mt-2">إجمالي المخزون</h3><p className="text-3xl font-bold">{totalInventoryItems}</p>
+                                </div>
+                                <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-lg text-center transform transition hover:scale-105">
+                                    <i className="fas fa-dollar-sign text-yellow-500 text-4xl"></i><h3 className="text-gray-500 dark:text-gray-400 mt-2">إجمالي الإيرادات</h3><p className="text-3xl font-bold">{totalRevenueAll.toFixed(2)} $</p>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-lg"><h3 className="font-bold">الإيرادات الشهرية</h3><p className="text-xl text-green-600 dark:text-green-400">{monthlyPayments + monthlySales} $</p><p className="text-sm">اشتراكات: {monthlyPayments} $ - مبيعات: {monthlySales} $</p></div>
+                                <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-lg"><h3 className="font-bold">المصاريف الشهرية</h3><p className="text-xl text-red-600 dark:text-red-400">{monthlyExpenses} $</p></div>
+                                <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-lg"><h3 className="font-bold">صافي الربح الشهري</h3><p className="text-xl text-blue-600 dark:text-blue-400">{monthlyNet} $</p></div>
+                            </div>
+                            <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-lg"><h3 className="font-bold mb-3">الإيرادات والمصاريف (آخر 6 أشهر)</h3><div className="h-64"><canvas ref={chartRef}></canvas></div></div>
+                            <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-lg"><h3 className="font-bold mb-3">إشعارات انتهاء الاشتراك</h3>
+                                {customers.filter(c => c.status === 'active' && new Date(c.subscriptionEnd) <= new Date(Date.now() + 3 * 86400000) && new Date(c.subscriptionEnd) >= new Date()).length === 0 ?
+                                    <p>لا توجد اشتراكات على وشك الانتهاء</p> :
+                                    <ul>{customers.filter(c => c.status === 'active' && new Date(c.subscriptionEnd) <= new Date(Date.now() + 3 * 86400000) && new Date(c.subscriptionEnd) >= new Date()).map(c => <li key={c.id} className="py-2 flex justify-between items-center border-b dark:border-gray-700">{c.name} - ينتهي {new Date(c.subscriptionEnd).toLocaleDateString()} <button onClick={() => handleRenew(c, 1, 50)} className="bg-blue-600 text-white px-3 py-1 rounded-lg text-sm">تجديد</button></li>)}</ul>
+                                }
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Customers Tab */}
+                    {activeTab === TABS.CUSTOMERS && (
+                        <div className="animate-fade-in">
+                            <button onClick={() => { 
+                                setCustomerForm({ 
+                                    name: "", phone: "", address: "", 
+                                    subscriptionStart: new Date().toISOString().slice(0,10), 
+                                    subscriptionEnd: new Date(Date.now() + 30*86400000).toISOString().slice(0,10), 
+                                    status: "active", notes: "", id: null 
+                                }); 
+                                setModalType("customer"); 
+                                setModalOpen(true); 
+                            }} className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-xl mb-6 transition shadow-md"><i className="fas fa-plus ml-1"></i> مشترك جديد</button>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {customers.map(c => (
+                                    <CustomerCard
+                                        key={c.id}
+                                        customer={c}
+                                        salesCount={sales.filter(s => s.customerId === c.id).length}
+                                        installedCount={(installedItems[c.id] || []).reduce((a, i) => a + i.quantity, 0)}
+                                        onView={(cust) => { setSelectedCustomer(cust); setInvoiceLines([]); setInvoiceNote(""); setCurrentSaleTotal(0); setModalType("view"); setModalOpen(true); }}
+                                        onRenew={(cust) => { setSelectedCustomer(cust); setRenewMonths(1); setPaymentAmount(50); setModalType("renew"); setModalOpen(true); }}
+                                        onDelete={handleDeleteCustomer}
+                                        onPrint={printInvoice}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Inventory Tab */}
+                    {activeTab === TABS.INVENTORY && (
+                        <div className="animate-fade-in">
+                            <button onClick={() => { setCustomerForm({ name: "", quantity: 0, price: 0 }); setModalType("inventory"); setModalOpen(true); }} className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-xl mb-6 transition"><i className="fas fa-plus ml-1"></i> إضافة صنف</button>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {inventory.map(i => (
+                                    <div key={i.id} className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-lg transition hover:shadow-xl">
+                                        <h3 className="font-bold text-xl">{i.name}</h3>
+                                        <p className="text-gray-600 dark:text-gray-400">الكمية: {i.quantity}</p>
+                                        <p className="text-gray-600 dark:text-gray-400">السعر: {i.price} $</p>
+                                        <div className="flex gap-2 mt-3">
+                                            <button onClick={() => { setCustomerForm(i); setModalType("inventory"); setModalOpen(true); }} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm">تعديل</button>
+                                            <button onClick={async () => { if (window.confirm("حذف الصنف؟")) { await dbHelpers.deleteInventory(i.id); loadData(); } }} className="bg-red-600 text-white px-3 py-1.5 rounded-lg text-sm">حذف</button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Expenses Tab */}
+                    {activeTab === TABS.EXPENSES && (
+                        <div className="animate-fade-in">
+                            <button onClick={() => { setExpenseForm({ description: "", amount: 0, date: new Date().toISOString().slice(0,10), category: "أجهزة" }); setModalType("expense"); setModalOpen(true); }} className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-xl mb-6 transition"><i className="fas fa-plus ml-1"></i> إضافة مصروف</button>
+                            <div className="overflow-x-auto bg-white dark:bg-gray-800 rounded-2xl shadow-lg">
+                                <table className="w-full">
+                                    <thead className="bg-gray-100 dark:bg-gray-700"><tr><th className="p-3 text-right">التاريخ</th><th className="p-3 text-right">الوصف</th><th className="p-3 text-right">الفئة</th><th className="p-3 text-right">المبلغ</th><th className="p-3 text-right"></th></tr></thead>
+                                    <tbody>
+                                        {expenses.sort((a,b)=>new Date(b.date)-new Date(a.date)).map(e => (
+                                            <tr key={e.id} className="border-b dark:border-gray-700"><td className="p-3">{new Date(e.date).toLocaleDateString('ar-EG')}</td><td className="p-3">{e.description}</td><td className="p-3">{e.category}</td><td className="p-3">{e.amount} $</td><td className="p-3"><button onClick={() => handleDeleteExpense(e.id)} className="text-red-600 hover:text-red-800"><i className="fas fa-trash"></i></button></td></tr>
+                                        ))}
+                                        {expenses.length === 0 && <tr><td colSpan="5" className="p-4 text-center">لا توجد مصاريف</td></tr>}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Reports Tab */}
+                    {activeTab === TABS.REPORTS && (
+                        <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-lg animate-fade-in">
+                            <h3 className="font-bold text-xl mb-4">التقارير المالية</h3>
+                            <label className="block mb-4">اختر الشهر: <input type="month" value={monthlyFilter} onChange={e => setMonthlyFilter(e.target.value)} className="border dark:border-gray-600 rounded-lg p-2 dark:bg-gray-700" /></label>
+                            {(() => {
+                                const revMonth = payments.filter(p => p.date.startsWith(monthlyFilter)).reduce((s, p) => s + p.amount, 0) + sales.filter(s => s.date.startsWith(monthlyFilter)).reduce((s, sl) => s + sl.totalAmount, 0);
+                                const expMonth = expenses.filter(e => e.date.startsWith(monthlyFilter)).reduce((s, e) => s + e.amount, 0);
+                                return (<div className="space-y-2"><p className="text-lg">إجمالي الإيرادات: <strong className="text-green-600 dark:text-green-400">{revMonth} $</strong></p><p className="text-lg">إجمالي المصاريف: <strong className="text-red-600 dark:text-red-400">{expMonth} $</strong></p><p className="text-lg font-bold">صافي الربح: <strong className="text-blue-600 dark:text-blue-400">{revMonth - expMonth} $</strong></p></div>);
+                            })()}
+                            <div className="mt-8"><h4 className="font-bold text-lg">قائمة المشتركين المنتهية اشتراكاتهم</h4>
+                                {customers.filter(c => new Date(c.subscriptionEnd) < new Date()).length === 0 ? <p>لا يوجد</p> : <ul className="list-disc pr-5 mt-2">{customers.filter(c => new Date(c.subscriptionEnd) < new Date()).map(c => <li key={c.id}>{c.name} - انتهى {new Date(c.subscriptionEnd).toLocaleDateString()}</li>)}</ul>}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modals */}
+                    <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={
+                        modalType === "customer" ? (customerForm.id ? "تعديل مشترك" : "إضافة مشترك") :
+                        modalType === "renew" ? "تجديد اشتراك" :
+                        modalType === "view" ? "تفاصيل المشترك" :
+                        modalType === "inventory" ? (customerForm.id ? "تعديل صنف" : "إضافة صنف") :
+                        modalType === "expense" ? "إضافة مصروف" : ""
+                    }>
+                        {modalType === "customer" && (
+                            <form onSubmit={handleSaveCustomer} className="space-y-4">
+                                <input type="text" placeholder="الاسم" value={customerForm.name} onChange={e => setCustomerForm({...customerForm, name: e.target.value})} className="w-full border dark:border-gray-600 rounded-xl p-3 dark:bg-gray-700" required />
+                                <input type="tel" placeholder="رقم الهاتف" value={customerForm.phone} onChange={e => setCustomerForm({...customerForm, phone: e.target.value})} className="w-full border dark:border-gray-600 rounded-xl p-3 dark:bg-gray-700" required />
+                                <input type="text" placeholder="العنوان" value={customerForm.address} onChange={e => setCustomerForm({...customerForm, address: e.target.value})} className="w-full border dark:border-gray-600 rounded-xl p-3 dark:bg-gray-700" />
+                                <label className="block">تاريخ بدء الاشتراك</label>
+                                <input type="date" value={customerForm.subscriptionStart} onChange={e => setCustomerForm({...customerForm, subscriptionStart: e.target.value})} className="w-full border dark:border-gray-600 rounded-xl p-3 dark:bg-gray-700" required />
+                                <label>تاريخ انتهاء الاشتراك</label>
+                                <input type="date" value={customerForm.subscriptionEnd} onChange={e => setCustomerForm({...customerForm, subscriptionEnd: e.target.value})} className="w-full border dark:border-gray-600 rounded-xl p-3 dark:bg-gray-700" required />
+                                <select value={customerForm.status} onChange={e => setCustomerForm({...customerForm, status: e.target.value})} className="w-full border dark:border-gray-600 rounded-xl p-3 dark:bg-gray-700">
+                                    <option value="active">نشط</option>
+                                    <option value="suspended">موقوف</option>
+                                </select>
+                                <textarea placeholder="ملاحظات" value={customerForm.notes} onChange={e => setCustomerForm({...customerForm, notes: e.target.value})} className="w-full border dark:border-gray-600 rounded-xl p-3 dark:bg-gray-700"></textarea>
+                                <div className="flex gap-3 pt-2"><button type="submit" className="bg-blue-600 text-white px-5 py-2 rounded-xl">حفظ</button><button type="button" onClick={() => setModalOpen(false)} className="bg-gray-300 dark:bg-gray-600 px-5 py-2 rounded-xl">إلغاء</button></div>
+                            </form>
+                        )}
+                        {modalType === "renew" && selectedCustomer && (
+                            <div className="space-y-4">
+                                <p><strong>{selectedCustomer.name}</strong></p>
+                                <label>عدد الأشهر:</label><input type="number" value={renewMonths} onChange={e => setRenewMonths(parseInt(e.target.value))} className="w-full border rounded-xl p-3" min="1" />
+                                <label>المبلغ ($):</label><input type="number" value={paymentAmount} onChange={e => setPaymentAmount(parseFloat(e.target.value))} className="w-full border rounded-xl p-3" />
+                                <button onClick={async () => { await handleRenew(selectedCustomer, renewMonths, paymentAmount); setModalOpen(false); }} className="bg-green-600 text-white px-5 py-2 rounded-xl w-full">تجديد</button>
+                            </div>
+                        )}
+                        {modalType === "view" && selectedCustomer && (
+                            <div className="space-y-4">
+                                <div><i className="fas fa-user ml-2"></i> {selectedCustomer.name}</div>
+                                <div><i className="fas fa-phone ml-2"></i> {selectedCustomer.phone}</div>
+                                <div><i className="fas fa-map-marker ml-2"></i> {selectedCustomer.address}</div>
+                                <div><i className="fas fa-calendar ml-2"></i> الاشتراك: {new Date(selectedCustomer.subscriptionStart).toLocaleDateString()} → {new Date(selectedCustomer.subscriptionEnd).toLocaleDateString()}</div>
+                                <div><i className="fas fa-tag ml-2"></i> الحالة: {selectedCustomer.status === "active" ? "نشط" : "موقوف"}</div>
+                                <h4 className="font-bold">الأجهزة المركبة</h4>
+                                <ul>{(installedItems[selectedCustomer.id] || []).map(inst => { const item = inventory.find(i => i.id === inst.itemId); return <li key={inst.id}>{item ? `${item.name} (x${inst.quantity})` : 'غير معروف'} - {new Date(inst.installationDate).toLocaleDateString()}</li>; })}</ul>
+                                <h4 className="font-bold">إنشاء فاتورة بيع</h4>
+                                <div className="grid gap-2"><select value={equipmentItemId} onChange={e => setEquipmentItemId(e.target.value)} className="border rounded-xl p-3"><option value="">اختر جهاز</option>{inventory.map(i => <option key={i.id} value={i.id}>{i.name} (متاح: {i.quantity})</option>)}</select>
+                                <input type="number" placeholder="الكمية" value={equipmentQuantity} onChange={e => setEquipmentQuantity(parseInt(e.target.value) || 1)} className="border rounded-xl p-3" min="1" />
+                                <button onClick={addInvoiceLine} className="bg-indigo-600 text-white px-4 py-2 rounded-xl">إضافة عنصر</button></div>
+                                {invoiceLines.length > 0 && (
+                                    <div className="bg-gray-100 dark:bg-gray-700 p-3 rounded-xl">
+                                        <h5 className="font-semibold">عناصر الفاتورة</h5>
+                                        <ul>{invoiceLines.map(l => <li key={l.id}>{l.itemName} - {l.quantity} × {l.unitPrice} = {l.total.toFixed(2)} $</li>)}</ul>
+                                        <p className="font-bold mt-1">الإجمالي: {currentSaleTotal.toFixed(2)} $</p>
+                                        <input type="text" placeholder="ملاحظات" value={invoiceNote} onChange={e => setInvoiceNote(e.target.value)} className="w-full border rounded-xl p-2 mt-2" />
+                                        <button onClick={async () => { await handleAddSaleInvoice(selectedCustomer); setModalOpen(false); }} className="bg-green-600 text-white px-4 py-2 rounded-xl w-full mt-2">حفظ الفاتورة</button>
+                                    </div>
+                                )}
+                                <h4 className="font-bold">تسجيل دفعة يدوية</h4>
+                                <input type="number" placeholder="المبلغ" value={paymentAmount} onChange={e => setPaymentAmount(parseFloat(e.target.value))} className="border rounded-xl p-3 w-full" />
+                                <button onClick={async () => { await handleAddPayment(selectedCustomer.id, paymentAmount, "دفعة يدوية"); setModalOpen(false); }} className="bg-yellow-600 text-white px-4 py-2 rounded-xl w-full">إضافة دفعة</button>
+                            </div>
+                        )}
+                        {modalType === "inventory" && (
+                            <form onSubmit={async (e) => { e.preventDefault(); if (customerForm.id) await dbHelpers.updateInventory(customerForm); else await dbHelpers.addInventory(customerForm); setModalOpen(false); loadData(); }} className="space-y-4">
+                                <input type="text" placeholder="اسم الصنف" value={customerForm.name} onChange={e => setCustomerForm({...customerForm, name: e.target.value})} className="w-full border rounded-xl p-3" required />
+                                <input type="number" placeholder="الكمية" value={customerForm.quantity} onChange={e => setCustomerForm({...customerForm, quantity: parseInt(e.target.value)})} className="w-full border rounded-xl p-3" required />
+                                <input type="number" placeholder="السعر" value={customerForm.price} onChange={e => setCustomerForm({...customerForm, price: parseFloat(e.target.value)})} className="w-full border rounded-xl p-3" required />
+                                <div className="flex gap-3"><button type="submit" className="bg-blue-600 text-white px-5 py-2 rounded-xl">حفظ</button><button type="button" onClick={() => setModalOpen(false)} className="bg-gray-300 dark:bg-gray-600 px-5 py-2 rounded-xl">إلغاء</button></div>
+                            </form>
+                        )}
+                        {modalType === "expense" && (
+                            <form onSubmit={handleSaveExpense} className="space-y-4">
+                                <input type="text" placeholder="الوصف" value={expenseForm.description} onChange={e => setExpenseForm({...expenseForm, description: e.target.value})} className="w-full border rounded-xl p-3" required />
+                                <input type="number" placeholder="المبلغ" value={expenseForm.amount} onChange={e => setExpenseForm({...expenseForm, amount: parseFloat(e.target.value)})} className="w-full border rounded-xl p-3" required />
+                                <input type="date" value={expenseForm.date} onChange={e => setExpenseForm({...expenseForm, date: e.target.value})} className="w-full border rounded-xl p-3" required />
+                                <select value={expenseForm.category} onChange={e => setExpenseForm({...expenseForm, category: e.target.value})} className="w-full border rounded-xl p-3"><option>أجهزة</option><option>صيانة</option><option>إيجار</option><option>رواتب</option><option>أخرى</option></select>
+                                <div className="flex gap-3"><button type="submit" className="bg-blue-600 text-white px-5 py-2 rounded-xl">حفظ</button><button type="button" onClick={() => setModalOpen(false)} className="bg-gray-300 dark:bg-gray-600 px-5 py-2 rounded-xl">إلغاء</button></div>
+                            </form>
+                        )}
+                    </Modal>
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+</body>
+</html>
